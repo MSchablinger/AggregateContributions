@@ -58,10 +58,10 @@
 
 				const repos = await getRepos(type);
 
-				// activity = user -> [repo_stat]
+				// users = user -> {user: {id, url}, activity: [repo_stat]}
 				// repo_stat := {name: repo_name, weeks: [week]}
 				// week := {start, add, delete, change}
-				const activities = new Map();
+				const users = new Map();
 
 				let promises = [];
 				for (let repo of repos) {
@@ -76,35 +76,36 @@
 					if (repo.status != 200) continue;
 
 					for (let contributorStat of repo.stats) {
-						const name = contributorStat.author.login;
-						if (!activities.has(name)) {
-							activities.set(name, []);
+						const author = contributorStat.author;
+						const name = author.login;
+						if (!users.has(name)) {
+							users.set(name, {user: {id: author.id, url: author.html_url}, activity: []});
 						}
 
 						// array that contains repo stats
-						const activity = activities.get(name);
+						const activity = users.get(name).activity;
 						const weeks = contributorStat.weeks.map(week => ({start: week.w, add: week.a, delete: week.d, change: week.c}));
 						activity.push({name: repo.name, commits: contributorStat.total, weeks});
 					}
 				}
-				return activities;
+				return users;
 			}
 
-			async function visualize(activity) {
+			async function visualize(users) {
 				// get smallest scale for graphs that have the same x axis
-				const startValues = Array.from(activity.values())
-					.flatMap(repoStats => repoStats.flatMap(repo => repo.weeks))
+				const startValues = Array.from(users.values())
+					.flatMap(data => data.activity.flatMap(repo => repo.weeks))
 					.flatMap(week => week.start)
 					.filter(start => typeof start === 'number');
 				const smallestStart = startValues.length > 0 ? Math.min(...startValues) : undefined
 
 				$("#result-container").append('<div id="result"></div>');
-				for (let [user, repos] of activity) {
-					// some users have `[]` in their name, breaking the selector
-					const chartId = user.hashCode();
+				for (let [user, data] of users) {
+					const repos = data.activity;
+					const chartId = data.user.id;
 					$("#result").append(`
 						<div class="result-card">
-							<h3>${user}</h3>
+							<a style="text-decoration: none" target="_blank" href="${data.user.url}"><h3>${user}</h3></a>
 							<canvas id="chart-${chartId}"></canvas>
 						</div>
 					`).ready((jq) => {
