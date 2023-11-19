@@ -20,12 +20,27 @@
 			<h1>AggregateContributions</h1>
 			<form method="GET">
 				<div>
+					<label for="token">Token</label>
+					<input id="token" placeholder="GitHub token (optional)" type="password" autocomplete="off" onchange="tokenChanged()"></input>
+					<script>
+						const tokenField = $("#token");
+						let token = window.localStorage.getItem("token");
+						tokenField.val(token);
+						tokenField.on('change keydown paste input', () => {
+							token = tokenField.val();
+							window.localStorage.setItem("token", token);
+						});
+					</script>
+				</div>
+				<div>
 					<label for="user">User</label>
 					<input id="user" name="user" placeholder="GitHub name" required></input>
 				</div>
 				<script>document.getElementById('user').value = user</script>
 				<input type="submit">
 			</form>
+			<small style="color: #F8F8F2">Entering a GitHub token will greately increase the rate limits.</small>
+			<small style="color: #F8F8F2">No scope is required.</small>
 		</div>
 		<div id="result-container"></div>
 		<script type="module">
@@ -36,7 +51,7 @@
 
 			import { Octokit } from "https://esm.sh/@octokit/core";
 
-			const octokit = new Octokit();
+			let octokit;
 
 			async function getType() {
 				/* either "Organization" or "User" */
@@ -84,7 +99,9 @@
 
 						// array that contains repo stats
 						const activity = users.get(name).activity;
-						const weeks = contributorStat.weeks.map(week => ({start: week.w, add: week.a, delete: week.d, change: week.c}));
+						const weeks = contributorStat.weeks
+							.filter(week => !(week.a == 0 && week.d == 0 && week.c == 0))
+							.map(week => ({start: week.w, add: week.a, delete: week.d, change: week.c}))
 						activity.push({name: repo.name, commits: contributorStat.total, weeks});
 					}
 				}
@@ -109,7 +126,7 @@
 							<canvas id="chart-${chartId}"></canvas>
 						</div>
 					`).ready((jq) => {
-						const weekMap = new Map();
+						let weekMap = new Map();
 
 						for (let repo of repos) {
 							for (let week of repo.weeks) {
@@ -121,6 +138,10 @@
 								}
 							}
 						}
+
+						if (weekMap.size <= 2) weekMap.set(Math.floor(Date.now() / 1000), {add: 0, delete: 0, change: 0});
+						// sort map
+						weekMap = new Map([...weekMap.entries()].sort());
 						// dimensions
 						const keys = ["add", "delete", "change"];
 
@@ -149,6 +170,9 @@
 			}
 
 			async function run() {
+				octokit = new Octokit({
+					auth: token
+				});
 				const data = await fetchData();
 				visualize(data);
 			}
