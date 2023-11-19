@@ -33,7 +33,7 @@
 					</script>
 				</div>
 				<div>
-					<label for="user">User</label>
+					<label for="user">User/Org</label>
 					<input id="user" name="user" placeholder="GitHub name" required></input>
 				</div>
 				<script>document.getElementById('user').value = user</script>
@@ -119,17 +119,23 @@
 				$("#result-container").append('<div id="result"></div>');
 				for (let [user, data] of users) {
 					const repos = data.activity;
-					const chartId = data.user.id;
+					const userId = data.user.id;
 					$("#result").append(`
-						<div class="result-card">
+						<div class="result-card" id="card-${userId}">
 							<a style="text-decoration: none" target="_blank" href="${data.user.url}"><h3>${user}</h3></a>
-							<canvas id="chart-${chartId}"></canvas>
+							<canvas id="chart-${userId}"></canvas>
 						</div>
 					`).ready((jq) => {
 						let weekMap = new Map();
 
+						let total = {add: 0, delete: 0, change: 0, commits: 0};
+
 						for (let repo of repos) {
+							total.commits += repo.commits;
 							for (let week of repo.weeks) {
+								total.add += week.add;
+								total.delete += week.delete;
+								total.change += week.change;
 								if (!weekMap.has(week.start)) {
 									weekMap.set(week.start, {add: week.add, delete: week.delete, change: week.change});
 								} else {
@@ -150,7 +156,7 @@
 							datasets: keys.map(key => ({fill: true, label: key, data: Array.from(weekMap.values()).map(week => week[key])}))
 						};
 
-						new Chart($(`#chart-${chartId}`), {
+						new Chart($(`#chart-${userId}`), {
 							type: 'line',
 							options: {
 								scales: {
@@ -164,6 +170,12 @@
 							},
 							data
 						});
+
+						$(`#card-${userId}`).append(`<div class="total-stats">
+							<p>${total.commits} commits</p>
+							<p class="total-add">${total.add} ++</p>
+							<p class="total-delete">${total.delete} --<p>
+						</div>`);
 					});
 				}
 				$(".lds-dual-ring").remove();
