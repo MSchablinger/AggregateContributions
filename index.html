@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<title>AggregateContributions</title>
+		<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+		<link rel="stylesheet" href="style.css">
+		<script src="script.js"></script>
+		<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js" integrity="sha512-v2CJ7UaYy4JwqLDIrZUI/4hqeoQieOmAZNXBeQyjo21dadnwR+8ZaIJVT8EE2iyI61OV8e6M8PP2/4hpQINQ/g==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+	</head>
+	<body class="no-query">
+		<script>
+			const queryParams = new URLSearchParams(window.location.search);
+			const user = queryParams.get("user");
+			if (user) {
+				// causes the search to move up
+				$("body").removeClass("no-query");
+			}
+		</script>
+		<div id="header">
+			<h1>AggregateContributions</h1>
+			<form method="GET">
+				<div>
+					<label for="user">User</label>
+					<input id="user" name="user" placeholder="GitHub name" required></input>
+				</div>
+				<script>document.getElementById('user').value = user</script>
+				<input type="submit">
+			</form>
+		</div>
+		<div id="result-container"></div>
+		<script type="module">
+			if (user) {
+				// show loading banner
+				$("#result-container").append('<div class="lds-dual-ring"></div>');
+			}
+
+			import { Octokit } from "https://esm.sh/@octokit/core";
+
+			const octokit = new Octokit();
+
+			async function getType() {
+				/* either "Organization" or "User" */
+				return await octokit.request('GET /users/{user}', {user}).type;
+			}
+
+			async function getRepos(type) {
+				let response;
+				if (type == 'Organization') {
+					response = await octokit.request('GET /orgs/{user}/repos', {user});
+				} else {
+					response = await octokit.request('GET /users/{user}/repos', {user});
+				}
+				return response.data.map(repo => repo.name);
+			}
+
+			async function fetchData() {
+				const type = await getType();
+
+				const repos = await getRepos(type);
+
+				// activity = user -> [repo_stat]
+				// repo_stat := {name: repo_name, weeks: [week]}
+				// week := {start, add, delete, change}
+				const activities = new Map();
+
+				let promises = [];
+				for (let repo of repos) {
+					promises.push(octokit.request('GET /repos/{user}/{repo}/stats/contributors', {user, repo})
+						.then(res => res.status != 200 ? {status: res.status} : ({status: res.status, name: repo, stats: res.data ?? []})));
+				}
+
+				const promiseResults = await Promise.all(promises);
+				for (let repo of promiseResults) {
+					// if the status isn't 200, the repo might be processing
+					// TODO: show warning
+					if (repo.status != 200) continue;
+
+					for (let contributorStat of repo.stats) {
+						const name = contributorStat.author.login;
+						if (!activities.has(name)) {
+							activities.set(name, []);
+						}
+
+						// array that contains repo stats
+						const activity = activities.get(name);
+						const weeks = contributorStat.weeks.map(week => ({start: week.w, add: week.a, delete: week.d, change: week.c}));
+						activity.push({name: repo.name, commits: contributorStat.total, weeks});
+					}
+				}
+				return activities;
+			}
+
+			async function visualize(activity) {
+				// get smallest scale for graphs that have the same x axis
+				const startValues = Array.from(activity.values())
+					.flatMap(repoStats => repoStats.flatMap(repo => repo.weeks))
+					.flatMap(week => week.start)
+					.filter(start => typeof start === 'number');
+				const smallestStart = startValues.length > 0 ? Math.min(...startValues) : undefined
+
+				$("#result-container").append('<div id="result"></div>');
+				for (let [user, repos] of activity) {
+					// some users have `[]` in their name, breaking the selector
+					const chartId = user.hashCode();
+					$("#result").append(`
+						<div class="result-card">
+							<h3>${user}</h3>
+							<canvas id="chart-${chartId}"></canvas>
+						</div>
+					`).ready((jq) => {
+						const weekMap = new Map();
+
+						for (let repo of repos) {
+							for (let week of repo.weeks) {
+								if (!weekMap.has(week.start)) {
+									weekMap.set(week.start, {add: week.add, delete: week.delete, change: week.change});
+								} else {
+									const ex = weekMap.get(week.start);
+									weekMap.set(week.start, {add: ex.add + week.add, delete: ex.delete + week.delete, change: ex.change + week.change });
+								}
+							}
+						}
+						// dimensions
+						const keys = ["add", "delete", "change"];
+
+						const data = {
+							labels: Array.from(weekMap.keys()).map(key => new Date(key * 1000).toLocaleDateString("de-DE", {day: 'numeric', month: 'numeric', year: 'numeric'})),
+							datasets: keys.map(key => ({fill: true, label: key, data: Array.from(weekMap.values()).map(week => week[key])}))
+						};
+
+						new Chart($(`#chart-${chartId}`), {
+							type: 'line',
+							options: {
+								scales: {
+									y: {
+										stacked: false,
+										ticks: {
+											precision: 0
+										}
+									}
+								}
+							},
+							data
+						});
+					});
+				}
+				$(".lds-dual-ring").remove();
+			}
+
+			async function run() {
+				const data = await fetchData();
+				visualize(data);
+			}
+
+			if (user) run()
+		</script>
+	</body>
+</html>
