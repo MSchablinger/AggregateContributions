@@ -94,28 +94,30 @@
 						const author = contributorStat.author;
 						const name = author.login;
 						if (!users.has(name)) {
-							users.set(name, {user: {id: author.id, url: author.html_url}, activity: []});
+							users.set(name, {user: {id: author.id, url: author.html_url}, totalChanges: 0, activity: []});
 						}
 
 						// array that contains repo stats
 						const activity = users.get(name).activity;
+
+						let totalChanges = 0;
 						const weeks = contributorStat.weeks
 							.filter(week => !(week.a == 0 && week.d == 0 && week.c == 0))
-							.map(week => ({start: week.w, add: week.a, delete: week.d, change: week.c}))
+							.map(week => {
+								totalChanges += week.a + week.d + week.c;
+								return {start: week.w, add: week.a, delete: week.d, change: week.c}
+							});
+
+						users.get(name).totalChanges += totalChanges;
+
 						activity.push({name: repo.name, commits: contributorStat.total, weeks});
 					}
 				}
-				return users;
+				// sort by activity
+				return new Map([...users.entries()].sort((a, b) => (a[1].totalChanges < b[1].totalChanges) ? 1 : -1));
 			}
 
 			async function visualize(users) {
-				// get smallest scale for graphs that have the same x axis
-				const startValues = Array.from(users.values())
-					.flatMap(data => data.activity.flatMap(repo => repo.weeks))
-					.flatMap(week => week.start)
-					.filter(start => typeof start === 'number');
-				const smallestStart = startValues.length > 0 ? Math.min(...startValues) : undefined
-
 				$("#result-container").append('<div id="result"></div>');
 				for (let [user, data] of users) {
 					const repos = data.activity;
@@ -173,8 +175,8 @@
 
 						$(`#card-${userId}`).append(`<div class="total-stats">
 							<p>${total.commits} commits</p>
-							<p class="total-add">${total.add} ++</p>
-							<p class="total-delete">${total.delete} --<p>
+							<p class="total-add">${total.add.grouped()} ++</p>
+							<p class="total-delete">${total.delete.grouped()} --<p>
 						</div>`);
 					});
 				}
