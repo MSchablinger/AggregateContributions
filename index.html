@@ -36,6 +36,14 @@
 					<label for="user">User/Org</label>
 					<input id="user" name="user" placeholder="GitHub name" required></input>
 				</div>
+				<div>
+                    <label for="start-date">Start Date</label>
+                    <input id="start-date" name="start-date" type="date" required></input>
+                </div>
+                <div>
+                    <label for="end-date">End Date</label>
+                    <input id="end-date" name="end-date" type="date" required></input>
+                </div>
 				<script>document.getElementById('user').value = user</script>
 				<input type="submit">
 			</form>
@@ -68,55 +76,58 @@
 				return response.data.map(repo => repo.name);
 			}
 
-			async function fetchData() {
-				const type = await getType();
+			async function fetchData(startDate, endDate) {
+                const type = await getType();
 
-				const repos = await getRepos(type);
+                const repos = await getRepos(type);
 
-				// users = user -> {user: {id, url}, activity: [repo_stat]}
-				// repo_stat := {name: repo_name, weeks: [week]}
-				// week := {start, add, delete, change}
-				const users = new Map();
+                // users = user -> {user: {id, url}, activity: [repo_stat]}
+                // repo_stat := {name: repo_name, weeks: [week]}
+                // week := {start, add, delete, change}
+                const users = new Map();
 
-				let promises = [];
-				for (let repo of repos) {
-					promises.push(octokit.request('GET /repos/{user}/{repo}/stats/contributors', {user, repo})
-						.then(res => res.status != 200 ? {status: res.status} : ({status: res.status, name: repo, stats: res.data ?? []})));
-				}
+                let promises = [];
+                for (let repo of repos) {
+                    promises.push(octokit.request('GET /repos/{user}/{repo}/stats/contributors', {user, repo})
+                        .then(res => res.status != 200 ? {status: res.status} : ({status: res.status, name: repo, stats: res.data ?? []})));
+                }
 
-				const promiseResults = await Promise.all(promises);
-				for (let repo of promiseResults) {
-					// if the status isn't 200, the repo might be processing
-					// TODO: show warning
-					if (repo.status != 200) continue;
+                const promiseResults = await Promise.all(promises);
+                for (let repo of promiseResults) {
+                    // if the status isn't 200, the repo might be processing
+                    // TODO: show warning
+                    if (repo.status != 200) continue;
 
-					for (let contributorStat of repo.stats) {
-						const author = contributorStat.author;
-						const name = author.login;
-						if (!users.has(name)) {
-							users.set(name, {user: {id: author.id, url: author.html_url}, totalChanges: 0, activity: []});
-						}
+                    for (let contributorStat of repo.stats) {
+                        const author = contributorStat.author;
+                        const name = author.login;
+                        if (!users.has(name)) {
+                            users.set(name, {user: {id: author.id, url: author.html_url}, totalChanges: 0, activity: []});
+                        }
 
-						// array that contains repo stats
-						const activity = users.get(name).activity;
+                        // array that contains repo stats
+                        const activity = users.get(name).activity;
 
-						let totalChanges = 0;
-						const weeks = contributorStat.weeks
-							.filter(week => !(week.a == 0 && week.d == 0 && week.c == 0))
-							.map(week => {
-								totalChanges += week.a + week.d + week.c;
-								return {start: week.w, add: week.a, delete: week.d, change: week.c}
-							});
+                        let totalChanges = 0;
+                        const weeks = contributorStat.weeks
+                            .filter(week => !(week.a == 0 && week.d == 0 && week.c == 0))
+                            .filter(week => {
+                                const weekStart = new Date(week.w * 1000);
+                                return weekStart >= new Date(startDate) && weekStart <= new Date(endDate);
+                            })
+                            .map(week => {
+                                totalChanges += week.a + week.d + week.c;
+                                return {start: week.w, add: week.a, delete: week.d, change: week.c}
+                            });
 
-						users.get(name).totalChanges += totalChanges;
+                        users.get(name).totalChanges += totalChanges;
 
-						activity.push({name: repo.name, commits: contributorStat.total, weeks});
-					}
-				}
-				// sort by activity
-				return new Map([...users.entries()].sort((a, b) => (a[1].totalChanges < b[1].totalChanges) ? 1 : -1));
-			}
-
+                        activity.push({name: repo.name, commits: contributorStat.total, weeks});
+                    }
+                }
+                // sort by activity
+                return new Map([...users.entries()].sort((a, b) => (a[1].totalChanges < b[1].totalChanges) ? 1 : -1));
+            }
 			async function visualize(users) {
 				$("#result-container").append('<div id="result"></div>');
 				for (let [user, data] of users) {
@@ -187,7 +198,9 @@
 				octokit = new Octokit({
 					auth: token
 				});
-				const data = await fetchData();
+				const startDate = queryParams.get("start-date");
+                const endDate = queryParams.get("end-date");
+                const data = await fetchData(startDate, endDate);
 				visualize(data);
 			}
 
